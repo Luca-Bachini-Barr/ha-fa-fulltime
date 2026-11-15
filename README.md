@@ -42,7 +42,7 @@ One device per team, named after the team.
 
 `upcoming`, `table` and `results` are not stored in the recorder.
 
-A match stays the **next match** until 90 minutes after kick-off. A match without a kick-off time on Full-Time is an all-day calendar event.
+A match stays the **next match** until 90 minutes after kick-off. A match without a kick-off time on Full-Time is an all-day calendar event, stays the next match all day, and its sensor shows midnight UK time; every match dict has `date` and `time_known` so cards can tell.
 
 ### The league table
 
@@ -50,7 +50,7 @@ The table is **worked out from the results**, not read from Full-Time: many yout
 
 ### New result event
 
-`event.<team>_new_result` fires once for each new result of the team (including walkovers). Results already in Full-Time when the team is added do not fire. Seen results are stored, so a result that comes in while Home Assistant is down fires after it starts.
+`event.<team>_new_result` fires once for each new result of the team (including walkovers). Results already in Full-Time when the team is added do not fire, and neither do results more than 14 days old when they first appear. A result counts as seen only after the event has fired, and seen results are stored, so a result that comes in while Home Assistant is down fires after it starts.
 
 ```yaml
 triggers:

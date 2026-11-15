@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import copy
 from datetime import timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.storage import Store
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
@@ -219,10 +220,21 @@ async def test_result_while_down_fires_after_restart(
         },
     )
     api.results.return_value = results
+    events = async_capture_events(hass, "state_changed")
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     ev = hass.states.get(f"event.{P}_new_result")
     assert ev.attributes["event_type"] == "loss"
+    fired = [
+        e
+        for e in events
+        if e.data["entity_id"] == f"event.{P}_new_result"
+        and e.data["new_state"].state not in ("unknown", "unavailable")
+    ]
+    assert len(fired) == 1
+    assert fired[0].data["new_state"].attributes["opponent"] == (
+        "Real Bedford Wixams U15 Reds"
+    )
 
 
 async def test_two_new_results_fire_two_events(
@@ -334,3 +346,110 @@ async def test_api_url_from_options(
     other = MockConfigEntry(domain=DOMAIN, data={}, options={"api_url": "http://x"})
     assert api_url(other) == "http://x"
     assert api_url(MockConfigEntry(domain=DOMAIN, data={})) == DEFAULT_API_URL
+
+
+def _new_result(day: str, score: str = "2 - 0") -> dict:
+    return {
+        "fixtureDateTime": f"{day} 09:00",
+        "homeTeam": TEAM,
+        "awayTeam": "Z",
+        "score": score,
+    }
+
+
+async def _poll(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    freezer.tick(timedelta(minutes=121))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+async def test_old_unseen_result_does_not_fire(
+    hass: HomeAssistant,
+    api: AsyncMock,
+    entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+    hass_storage,
+) -> None:
+    """A result older than 14 days when first seen is history, not news."""
+    await _setup(hass, entry)
+    api.results.return_value = [*copy.deepcopy(RESULTS), _new_result("20/10/26")]
+    await _poll(hass, freezer)
+    assert hass.states.get(f"event.{P}_new_result").state == "unknown"
+    seen = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]["seen"]
+    assert f"2026-10-20|{TEAM}|Z" in seen
+
+
+async def test_result_not_seen_until_fired(
+    hass: HomeAssistant,
+    api: AsyncMock,
+    entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+    hass_storage,
+) -> None:
+    """The store only learns a result after the event entity fired it."""
+    await _setup(hass, entry)
+    key = f"{DOMAIN}.{entry.entry_id}"
+    entry.runtime_data.data.new_results = []  # nothing pending
+    api.results.return_value = [*copy.deepcopy(RESULTS), _new_result("14/11/26")]
+    with patch("custom_components.fa_fulltime.event.FullTimeResultEvent._fire_new"):
+        await _poll(hass, freezer)
+    assert f"2026-11-14|{TEAM}|Z" not in hass_storage[key]["data"]["seen"]
+    # Next poll with the event entity working: fired and stored.
+    await _poll(hass, freezer)
+    assert hass.states.get(f"event.{P}_new_result").attributes["away_team"] == "Z"
+    assert f"2026-11-14|{TEAM}|Z" in hass_storage[key]["data"]["seen"]
+
+
+async def test_save_merges_with_stored_keys(
+    hass: HomeAssistant,
+    api: AsyncMock,
+    entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+    hass_storage,
+) -> None:
+    """Keys another coordinator of the entry saved are kept."""
+    await _setup(hass, entry)
+    key = f"{DOMAIN}.{entry.entry_id}"
+    hass_storage[key]["data"]["seen"].append("2026-01-01|A|B")
+    api.results.return_value = [*copy.deepcopy(RESULTS), _new_result("14/11/26")]
+    await _poll(hass, freezer)
+    seen = hass_storage[key]["data"]["seen"]
+    assert "2026-01-01|A|B" in seen
+    assert f"2026-11-14|{TEAM}|Z" in seen
+
+
+async def test_storage_errors_keep_entities_working(
+    hass: HomeAssistant,
+    api: AsyncMock,
+    entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unreadable or unwritable storage is logged; sensors still update."""
+
+    class BrokenLoad(Store):
+        async def async_load(self):
+            raise OSError("disk")
+
+    class BrokenSave(Store):
+        async def async_save(self, data):
+            raise OSError("disk full")
+
+    with patch("custom_components.fa_fulltime.coordinator.Store", BrokenLoad):
+        await _setup(hass, entry)
+    assert hass.states.get(f"sensor.{P}_points").state == "11"
+    assert "Could not read seen results" in caplog.text
+    coordinator = entry.runtime_data
+
+    # Storage readable again: the first real load is a first run (no events).
+    coordinator._store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
+    await _poll(hass, freezer)
+    assert hass.states.get(f"event.{P}_new_result").state == "unknown"
+
+    # Saving fails: the event still fires, the failure is logged.
+    coordinator._store = BrokenSave(hass, 1, f"{DOMAIN}.{entry.entry_id}")
+    api.results.return_value = [*copy.deepcopy(RESULTS), _new_result("14/11/26")]
+    await _poll(hass, freezer)
+    assert hass.states.get(f"sensor.{P}_points").state == "14"
+    assert hass.states.get(f"event.{P}_new_result").attributes["event_type"] == "win"
+    assert "Could not save seen results" in caplog.text

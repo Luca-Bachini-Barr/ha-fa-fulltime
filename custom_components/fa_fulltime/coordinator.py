@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -21,6 +24,7 @@ from .const import (
     DOMAIN,
     FULLTIME_TZ,
     MATCH_DURATION,
+    RESULT_EVENT_MAX_AGE,
 )
 from .parse import Match, TeamView, parse_matches, team_view
 
@@ -65,6 +69,7 @@ class FullTimeCoordinator(DataUpdateCoordinator[FullTimeData]):
             hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}"
         )
         self._seen: set[str] | None = None
+        self._save_lock = asyncio.Lock()
 
     async def _async_update_data(self) -> FullTimeData:
         try:
@@ -84,17 +89,45 @@ class FullTimeCoordinator(DataUpdateCoordinator[FullTimeData]):
         return FullTimeData(view, matches, await self._new_results(view))
 
     async def _new_results(self, view: TeamView) -> list[Match]:
-        keys = {m.key for m in view.decided}
+        """Results of the team not yet reported, oldest first.
+
+        They are only marked as seen once the event entity has fired them
+        (see `mark_seen`), so a crash in between reports them again rather
+        than never.
+        """
         if self._seen is None:
-            stored = await self._store.async_load()
+            try:
+                stored = await self._store.async_load()
+            except (HomeAssistantError, OSError, ValueError) as err:
+                _LOGGER.warning("Could not read seen results, retrying: %s", err)
+                return []
             if stored is None:
                 # First run: everything so far is history, not news.
-                self._seen = set(keys)
-                await self._store.async_save({"seen": sorted(keys)})
+                self._seen = set()
+                self.mark_seen(m.key for m in view.decided)
                 return []
             self._seen = set(stored.get("seen", []))
-        new = [m for m in view.decided if m.key not in self._seen]
-        if new:
-            self._seen |= keys
-            await self._store.async_save({"seen": sorted(self._seen)})
-        return new
+        unseen = [m for m in view.decided if m.key not in self._seen]
+        # Too old to be news (e.g. the event entity was disabled for weeks).
+        oldest = dt_util.now() - RESULT_EVENT_MAX_AGE
+        stale = [m.key for m in unseen if m.kickoff < oldest]
+        if stale:
+            self.mark_seen(stale)
+        return [m for m in unseen if m.kickoff >= oldest]
+
+    @callback
+    def mark_seen(self, keys: Iterable[str]) -> None:
+        """Remember reported results, in memory now and on disk soon."""
+        self._seen = (self._seen or set()) | set(keys)
+        self.hass.async_create_task(self._async_save())
+
+    async def _async_save(self) -> None:
+        async with self._save_lock:
+            try:
+                # Merge with what is stored, so an older coordinator of this
+                # entry (reload during a poll) can't drop keys a newer one saved.
+                stored = await self._store.async_load() or {}
+                seen = set(stored.get("seen", [])) | (self._seen or set())
+                await self._store.async_save({"seen": sorted(seen)})
+            except (HomeAssistantError, OSError, ValueError) as err:
+                _LOGGER.warning("Could not save seen results: %s", err)

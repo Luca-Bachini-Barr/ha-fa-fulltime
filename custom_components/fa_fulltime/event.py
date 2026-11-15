@@ -43,6 +43,8 @@ class FullTimeResultEvent(FullTimeEntity, EventEntity):
     @callback
     def _fire_new(self) -> None:
         data = self.coordinator.data
+        if not data.new_results:
+            return
         team = data.view.team
         for match in data.new_results:
             outcome = match.outcome(team)
@@ -50,5 +52,7 @@ class FullTimeResultEvent(FullTimeEntity, EventEntity):
                 self._trigger_event(outcome, match.as_dict(team))
                 # One state write per result, so each one reaches automations.
                 self.async_write_ha_state()
-        # Each result fires once, even if the entity is re-added.
+        # Only now are they seen: each result fires once, and a result is
+        # not lost if HA stops between the poll and this point.
+        self.coordinator.mark_seen(m.key for m in data.new_results)
         data.new_results = []

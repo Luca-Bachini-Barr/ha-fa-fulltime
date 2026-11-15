@@ -165,6 +165,8 @@ def test_team_view() -> None:
     last = view.last_result
     assert last.as_dict(TEAM) | {} == {
         "kickoff": "2026-11-14T09:00:00+00:00",
+        "date": "2026-11-14",
+        "time_known": True,
         "home_team": TEAM,
         "away_team": "Padbury Village U15 Cougars",
         "status": STATUS_PLAYED,
@@ -222,3 +224,36 @@ def test_undecided_match_has_no_outcome() -> None:
     assert played.goals(TEAM) == (1, 1)
     lost = Match(k, "B", TEAM, STATUS_PLAYED, home_score=2, away_score=1)
     assert lost.outcome(TEAM) == "loss"
+
+
+def test_unreadable_result_keeps_fixture() -> None:
+    """A result line with an unknown status doesn't hide the fixture."""
+    fixture = {
+        "fixtureDateTime": "05/12/26 09:00",
+        "homeTeam": TEAM,
+        "awayTeam": "B",
+        "location": "PARK",
+    }
+    result = {
+        "fixtureDateTime": "05/12/26 09:00",
+        "homeTeam": TEAM,
+        "awayTeam": "B",
+        "score": "TBC",
+    }
+    [match] = parse_matches([fixture], [result], UK)
+    assert match.status == STATUS_SCHEDULED
+    assert match.venue == "PARK"
+    # Without a fixture the unknown line is still listed.
+    [match] = parse_matches([], [result], UK)
+    assert match.status == STATUS_UNKNOWN
+
+
+def test_date_only_fixture_stays_upcoming_all_day() -> None:
+    """No kick-off time: next match until the day is over."""
+    k = datetime(2026, 12, 5, 0, 0, tzinfo=UK)
+    matches = [Match(k, TEAM, "B", time_known=False)]
+    evening = datetime(2026, 12, 5, 21, 0, tzinfo=UK)
+    assert team_view(matches, TEAM, evening, GRACE).next_match is matches[0]
+    assert team_view(matches, TEAM, k + timedelta(days=1), GRACE).next_match is None
+    data = matches[0].as_dict(TEAM)
+    assert (data["date"], data["time_known"]) == ("2026-12-05", False)

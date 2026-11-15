@@ -103,6 +103,10 @@ class Match:
         """Attributes for an entity, from `team`'s point of view if given."""
         data: dict[str, Any] = {
             "kickoff": self.kickoff.isoformat(),
+            # Full-Time can list a date without a kick-off time; kickoff is
+            # then midnight UK time and time_known is false.
+            "date": self.kickoff.date().isoformat(),
+            "time_known": self.time_known,
             "home_team": self.home,
             "away_team": self.away,
             "status": self.status,
@@ -222,6 +226,9 @@ def parse_matches(
         if (match := _match(item, tz, **parse_score(item))) is None:
             continue
         old = matches.get(match.key)
+        if match.status == STATUS_UNKNOWN and old is not None:
+            # An unreadable result line says nothing new: keep the fixture.
+            continue
         if old is not None and match.venue is None and old.venue:
             match = Match(**{**match.__dict__, "venue": old.venue})
         matches[match.key] = match
@@ -338,14 +345,18 @@ def team_view(
     """The team's matches, upcoming games, results and the table.
 
     A match stays upcoming until `played_grace` after kick-off, so the next
-    match sensor does not jump ahead while the game is on.
+    match sensor does not jump ahead while the game is on; one without a
+    kick-off time stays upcoming for the whole day.
     """
+
+    def _not_over(match: Match) -> bool:
+        if match.time_known:
+            return match.kickoff + played_grace > now
+        # No kick-off time: the match is on all day.
+        return match.kickoff.date() >= now.astimezone(match.kickoff.tzinfo).date()
+
     mine = [m for m in all_matches if m.involves(team)]
-    upcoming = [
-        m
-        for m in mine
-        if m.status == STATUS_SCHEDULED and m.kickoff + played_grace > now
-    ]
+    upcoming = [m for m in mine if m.status == STATUS_SCHEDULED and _not_over(m)]
     decided = [m for m in mine if m.status in DECIDED]
     table = league_table(all_matches)
     row = next((r for r in table if r.team == team), None)

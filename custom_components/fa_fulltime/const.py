@@ -31,6 +31,8 @@ REQUEST_TIMEOUT = 120
 # Full-Time lists kick-off times in UK time without a zone.
 FULLTIME_TZ = "Europe/London"
 MATCH_DURATION = timedelta(minutes=90)
+# Results older than this when first seen don't fire the new-result event.
+RESULT_EVENT_MAX_AGE = timedelta(days=14)
 FORM_LENGTH = 5
 UPCOMING_COUNT = 5
 

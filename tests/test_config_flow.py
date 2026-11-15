@@ -45,6 +45,7 @@ async def test_full_flow(hass: HomeAssistant, api: AsyncMock) -> None:
     )
     assert result["step_id"] == "team"
     api.fixtures.assert_awaited_with(DIVISION_ID)
+    api.results.assert_awaited_with(DIVISION_ID)
 
     with patch("custom_components.fa_fulltime.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_configure(
@@ -138,3 +139,31 @@ async def test_already_configured(hass: HomeAssistant, api: AsyncMock) -> None:
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+async def test_team_only_in_results(hass: HomeAssistant, api: AsyncMock) -> None:
+    """A team with results but no fixtures left can be picked."""
+    api.search_leagues.return_value = [LEAGUE]
+    api.fixtures.return_value = []
+    api.results.return_value = [
+        {
+            "fixtureDateTime": "14/11/26 09:00",
+            "homeTeam": "Only Results FC",
+            "awayTeam": "Other",
+            "score": "1 - 0",
+        }
+    ]
+    result = await _start(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"league_query": "x", "api_url": DEFAULT_API_URL}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"division_id": DIVISION_ID}
+    )
+    assert result["step_id"] == "team"
+    with patch("custom_components.fa_fulltime.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"team": "Only Results FC"}
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["team"] == "Only Results FC"
