@@ -1,10 +1,10 @@
-"""Sensors: next match, last result, league position, points and form."""
+"""Sensors: next match, last result, position, points, form, division results."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -50,6 +50,17 @@ def _form_attrs(view: TeamView) -> dict[str, Any]:
     return {"results": [m.as_dict(view.team) for m in recent]}
 
 
+def _division_attrs(view: TeamView) -> dict[str, Any]:
+    latest = view.latest_matchday
+    return {
+        "today": [m.as_dict() for m in view.matches_on(view.today)]
+        if view.today
+        else [],
+        "latest_date": latest.isoformat() if latest else None,
+        "latest": [m.as_dict() for m in view.matches_on(latest)] if latest else [],
+    }
+
+
 @dataclass(frozen=True, kw_only=True)
 class FullTimeSensorDescription(SensorEntityDescription):
     """How a sensor reads the team view."""
@@ -88,6 +99,12 @@ SENSORS: tuple[FullTimeSensorDescription, ...] = (
         value=lambda v: v.form() or None,
         attrs=_form_attrs,
     ),
+    FullTimeSensorDescription(
+        key="division_results",
+        device_class=SensorDeviceClass.DATE,
+        value=lambda v: v.latest_matchday,
+        attrs=_division_attrs,
+    ),
 )
 
 
@@ -107,7 +124,9 @@ class FullTimeSensor(FullTimeEntity, SensorEntity):
 
     entity_description: FullTimeSensorDescription
     # Lists of matches and the table: shown live, kept out of the database.
-    _unrecorded_attributes = frozenset({"upcoming", "table", "results"})
+    _unrecorded_attributes = frozenset(
+        {"upcoming", "table", "results", "today", "latest"}
+    )
 
     def __init__(
         self, coordinator: FullTimeCoordinator, description: FullTimeSensorDescription
@@ -117,7 +136,7 @@ class FullTimeSensor(FullTimeEntity, SensorEntity):
         self.entity_description = description
 
     @property
-    def native_value(self) -> str | int | datetime | None:
+    def native_value(self) -> str | int | date | datetime | None:
         """The value from the latest poll."""
         return self.entity_description.value(self.coordinator.data.view)
 

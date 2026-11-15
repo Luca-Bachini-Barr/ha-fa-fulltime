@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -172,6 +172,8 @@ def test_team_view() -> None:
         "status": STATUS_PLAYED,
         "competition": "Division 5 U15",
         "score": "4–1",
+        "home_score": 4,
+        "away_score": 1,
         "opponent": "Padbury Village U15 Cougars",
         "home_away": "home",
         "outcome": "win",
@@ -257,3 +259,40 @@ def test_date_only_fixture_stays_upcoming_all_day() -> None:
     assert team_view(matches, TEAM, k + timedelta(days=1), GRACE).next_match is None
     data = matches[0].as_dict(TEAM)
     assert (data["date"], data["time_known"]) == ("2026-12-05", False)
+
+
+def test_division_matchdays() -> None:
+    """The whole division's matches by day, and the latest day with results."""
+    view = team_view(parse_matches(FIXTURES, RESULTS, UK), TEAM, NOW, GRACE)
+    assert view.today == date(2026, 11, 15)
+    assert view.matches_on(view.today) == []
+    assert view.latest_matchday == date(2026, 11, 14)
+    day = view.matches_on(date(2026, 11, 14))
+    assert [(m.home, m.status) for m in day] == [
+        ("Deanshanger Colts U15 Stallions", STATUS_PLAYED),
+        ("MK United U15 Lions", STATUS_POSTPONED),
+        ("Shenley FC U15 Tigers", STATUS_PLAYED),
+        (TEAM, STATUS_PLAYED),
+    ]
+    assert day[0].as_dict()["home_score"] == 1
+    assert "home_score" not in day[1].as_dict()
+    # On match day, today's list has every game, played or not yet.
+    saturday = datetime(2026, 12, 5, 10, 0, tzinfo=UK)
+    view = team_view(parse_matches(FIXTURES, RESULTS, UK), TEAM, saturday, GRACE)
+    assert len(view.matches_on(view.today)) == 4
+    assert view.latest_matchday == date(2026, 11, 14)
+
+
+def test_latest_matchday_ignores_future_and_undecided() -> None:
+    """Postponed-only days and results dated after today don't count."""
+    k = datetime(2026, 11, 7, 9, 0, tzinfo=UK)
+    matches = [
+        Match(k, "A", TEAM, STATUS_PLAYED, home_score=1, away_score=0),
+        Match(k + timedelta(days=7), "B", TEAM, STATUS_POSTPONED),
+        Match(
+            k + timedelta(days=30), "C", TEAM, STATUS_PLAYED, home_score=0, away_score=0
+        ),
+    ]
+    view = team_view(matches, TEAM, NOW, GRACE)
+    assert view.latest_matchday == date(2026, 11, 7)
+    assert team_view([], TEAM, NOW, GRACE).latest_matchday is None
