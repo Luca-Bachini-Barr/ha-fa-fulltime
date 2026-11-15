@@ -45,6 +45,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: FullTimeConfigEntry) ->
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Delete the stored list of seen results."""
+    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     await Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}").async_remove()
 
 

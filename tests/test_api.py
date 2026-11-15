@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import aiohttp
 import pytest
 from homeassistant.core import HomeAssistant
@@ -74,3 +76,28 @@ async def test_errors(
         await client.results("1")
     with pytest.raises(FullTimeError):
         await client.search_leagues("x")
+
+
+async def test_credentials_not_in_errors(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """User info in the API URL never reaches the error text."""
+    aioclient_mock.get("https://user:secret@api.example/api/Results/1", status=503)
+    client = FullTimeClient(
+        async_get_clientsession(hass), "https://user:secret@api.example"
+    )
+    with pytest.raises(FullTimeError) as err:
+        await client.results("1")
+    assert "secret" not in str(err.value)
+    assert "https://api.example/api/Results/1" in str(err.value)
+
+
+async def test_oversized_response(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """Bodies over the cap are refused before decoding."""
+    aioclient_mock.get(f"{BASE}/api/Results/1", text="[" + "1," * 10 + "1]")
+    client = FullTimeClient(async_get_clientsession(hass), BASE)
+    with patch("custom_components.fa_fulltime.api.MAX_RESPONSE_BYTES", 10):
+        with pytest.raises(FullTimeError, match="over 10 bytes"):
+            await client.results("1")

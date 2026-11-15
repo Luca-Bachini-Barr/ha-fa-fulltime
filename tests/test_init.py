@@ -441,10 +441,17 @@ async def test_storage_errors_keep_entities_working(
     assert "Could not read seen results" in caplog.text
     coordinator = entry.runtime_data
 
-    # Storage readable again: the first real load is a first run (no events).
+    # Storage readable again but empty: after a failed read that is not a
+    # first run, so the results of the last 14 days (7 and 14 Nov) fire.
     coordinator._store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
+    events = async_capture_events(hass, "state_changed")
     await _poll(hass, freezer)
-    assert hass.states.get(f"event.{P}_new_result").state == "unknown"
+    fired = [
+        e.data["new_state"].attributes["kickoff"][:10]
+        for e in events
+        if e.data["entity_id"] == f"event.{P}_new_result"
+    ]
+    assert fired == ["2026-11-07", "2026-11-14"]
 
     # Saving fails: the event still fires, the failure is logged.
     coordinator._store = BrokenSave(hass, 1, f"{DOMAIN}.{entry.entry_id}")

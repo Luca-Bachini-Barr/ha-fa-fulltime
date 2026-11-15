@@ -69,7 +69,11 @@ class FullTimeCoordinator(DataUpdateCoordinator[FullTimeData]):
             hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}"
         )
         self._seen: set[str] | None = None
-        self._save_lock = asyncio.Lock()
+        self._load_failed = False
+        # One lock per entry, shared with the coordinator of a reloaded entry,
+        # so reads and saves of the store never interleave.
+        locks: dict[str, asyncio.Lock] = hass.data.setdefault(DOMAIN, {})
+        self._lock = locks.setdefault(entry.entry_id, asyncio.Lock())
 
     async def _async_update_data(self) -> FullTimeData:
         try:
@@ -97,16 +101,20 @@ class FullTimeCoordinator(DataUpdateCoordinator[FullTimeData]):
         """
         if self._seen is None:
             try:
-                stored = await self._store.async_load()
+                async with self._lock:
+                    stored = await self._store.async_load()
             except (HomeAssistantError, OSError, ValueError) as err:
                 _LOGGER.warning("Could not read seen results, retrying: %s", err)
+                self._load_failed = True
                 return []
-            if stored is None:
+            if stored is None and not self._load_failed:
                 # First run: everything so far is history, not news.
                 self._seen = set()
                 self.mark_seen(m.key for m in view.decided)
                 return []
-            self._seen = set(stored.get("seen", []))
+            # After a failed read an empty store is not proof of a first run:
+            # report what is unseen (the age limit below caps it).
+            self._seen = set((stored or {}).get("seen", []))
         unseen = [m for m in view.decided if m.key not in self._seen]
         # Too old to be news (e.g. the event entity was disabled for weeks).
         oldest = dt_util.now() - RESULT_EVENT_MAX_AGE
@@ -122,7 +130,7 @@ class FullTimeCoordinator(DataUpdateCoordinator[FullTimeData]):
         self.hass.async_create_task(self._async_save())
 
     async def _async_save(self) -> None:
-        async with self._save_lock:
+        async with self._lock:
             try:
                 # Merge with what is stored, so an older coordinator of this
                 # entry (reload during a poll) can't drop keys a newer one saved.

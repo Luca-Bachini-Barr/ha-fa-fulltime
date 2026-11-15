@@ -27,6 +27,8 @@ MAX_SCAN_INTERVAL = 1440
 
 # The API scrapes Full-Time with a headless browser on a cache miss.
 REQUEST_TIMEOUT = 120
+# A whole division's fixtures or results is tens of KB.
+MAX_RESPONSE_BYTES = 5_000_000
 
 # Full-Time lists kick-off times in UK time without a zone.
 FULLTIME_TZ = "Europe/London"

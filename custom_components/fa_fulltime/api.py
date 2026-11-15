@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import html
+import json
 from typing import Any
 from urllib.parse import quote
 
 import aiohttp
+from yarl import URL
 
-from .const import REQUEST_TIMEOUT
+from .const import MAX_RESPONSE_BYTES, REQUEST_TIMEOUT
 
 
 class FullTimeError(Exception):
@@ -25,15 +27,22 @@ class FullTimeClient:
 
     async def _get(self, path: str) -> Any:
         url = f"{self.base_url}/api/{path}"
+        # Errors end up in the log: never show credentials in the URL.
+        shown = str(URL(url).with_user(None))
         try:
             async with self._session.get(
                 url, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
             ) as resp:
                 if resp.status != 200:
-                    raise FullTimeError(f"GET {url}: HTTP {resp.status}")
-                return await resp.json(content_type=None)
+                    raise FullTimeError(f"GET {shown}: HTTP {resp.status}")
+                body = await resp.content.read(MAX_RESPONSE_BYTES + 1)
+                if len(body) > MAX_RESPONSE_BYTES:
+                    raise FullTimeError(
+                        f"GET {shown}: response over {MAX_RESPONSE_BYTES} bytes"
+                    )
+                return json.loads(body)
         except (TimeoutError, aiohttp.ClientError, ValueError) as err:
-            raise FullTimeError(f"GET {url}: {err!r}") from err
+            raise FullTimeError(f"GET {shown}: {type(err).__name__}") from err
 
     async def search_leagues(self, name: str) -> list[dict[str, Any]]:
         """Leagues whose name contains `name`, each with its divisions.
