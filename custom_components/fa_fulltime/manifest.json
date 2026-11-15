@@ -1,0 +1,12 @@
+{
+  "domain": "fa_fulltime",
+  "name": "FA Full-Time",
+  "codeowners": ["@Luca-Bachini-Barr"],
+  "config_flow": true,
+  "documentation": "https://github.com/Luca-Bachini-Barr/ha-fa-fulltime",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Luca-Bachini-Barr/ha-fa-fulltime/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

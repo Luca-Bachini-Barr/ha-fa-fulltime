@@ -1,0 +1,100 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Find your league",
+        "description": "Type part of the league's name as it appears on FA Full-Time, e.g. \"Milton Keynes\".",
+        "data": {
+          "league_query": "League name",
+          "api_url": "FullTime API URL"
+        },
+        "data_description": {
+          "api_url": "The unofficial FullTime API (github.com/jwhughes-work/FullTimeAPI) that reads FA Full-Time. Keep the public one or point at your own copy."
+        }
+      },
+      "league": {
+        "title": "Pick the league",
+        "data": {
+          "league_id": "League"
+        }
+      },
+      "division": {
+        "title": "Pick the division",
+        "description": "Divisions of {league}. Loading the teams can take up to a minute.",
+        "data": {
+          "division_id": "Division"
+        }
+      },
+      "team": {
+        "title": "Pick the team",
+        "description": "Teams in {division}.",
+        "data": {
+          "team": "Team"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the FullTime API, or it timed out. Try again.",
+      "no_leagues": "No league matches that name.",
+      "no_teams": "This division has no fixtures or results yet."
+    },
+    "abort": {
+      "already_configured": "This team is already set up.",
+      "no_divisions": "This league lists no divisions."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "FA Full-Time options",
+        "data": {
+          "scan_interval": "Check every",
+          "api_url": "FullTime API URL"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_match": {
+        "name": "Next match"
+      },
+      "last_result": {
+        "name": "Last result",
+        "state": {
+          "win": "Win",
+          "draw": "Draw",
+          "loss": "Loss"
+        }
+      },
+      "league_position": {
+        "name": "League position"
+      },
+      "points": {
+        "name": "Points"
+      },
+      "form": {
+        "name": "Form"
+      }
+    },
+    "calendar": {
+      "matches": {
+        "name": "Matches"
+      }
+    },
+    "event": {
+      "new_result": {
+        "name": "New result",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "win": "Win",
+              "draw": "Draw",
+              "loss": "Loss"
+            }
+          }
+        }
+      }
+    }
+  }
+}
