@@ -75,6 +75,9 @@
       },
       "form": {
         "name": "Form"
+      },
+      "division_results": {
+        "name": "Division results"
       }
     },
     "calendar": {

@@ -117,6 +117,8 @@ class Match:
             data["competition"] = self.competition
         if (score := self.score()) is not None:
             data["score"] = score
+        if self.home_score is not None and self.away_score is not None:
+            data["home_score"], data["away_score"] = self.home_score, self.away_score
         if self.half_time:
             data["half_time"] = self.half_time
         if team is not None and self.involves(team):
@@ -320,6 +322,8 @@ class TeamView:
     decided: list[Match] = field(default_factory=list)  # oldest first
     table: list[TableRow] = field(default_factory=list)
     row: TableRow | None = None
+    division: list[Match] = field(default_factory=list)  # every match, by kick-off
+    today: date | None = None  # UK date of the poll
 
     @property
     def next_match(self) -> Match | None:
@@ -337,6 +341,21 @@ class TeamView:
             OUTCOME_LETTER[m.outcome(self.team)]  # type: ignore[index]
             for m in self.decided[-length:]
         )
+
+    def matches_on(self, day: date) -> list[Match]:
+        """Every match in the division on `day` (UK date), any status."""
+        return [m for m in self.division if m.kickoff.date() == day]
+
+    @property
+    def latest_matchday(self) -> date | None:
+        """The last day up to today with a decided match in the division."""
+        days = [
+            m.kickoff.date()
+            for m in self.division
+            if m.status in DECIDED
+            and (self.today is None or m.kickoff.date() <= self.today)
+        ]
+        return max(days, default=None)
 
 
 def team_view(
@@ -360,4 +379,7 @@ def team_view(
     decided = [m for m in mine if m.status in DECIDED]
     table = league_table(all_matches)
     row = next((r for r in table if r.team == team), None)
-    return TeamView(team, mine, upcoming, decided, table, row)
+    today = (
+        now.astimezone(all_matches[0].kickoff.tzinfo).date() if all_matches else None
+    )
+    return TeamView(team, mine, upcoming, decided, table, row, all_matches, today)

@@ -79,6 +79,16 @@ async def test_sensors(
     # No event for results that were already in on the first run.
     assert hass.states.get(f"event.{P}_new_result").state == "unknown"
 
+    div = hass.states.get(f"sensor.{P}_division_results")
+    assert div.state == "2026-11-14"
+    assert div.attributes["today"] == []
+    assert div.attributes["latest_date"] == "2026-11-14"
+    assert [m["score"] for m in div.attributes["latest"] if "score" in m] == [
+        "1–3",
+        "4–0",
+        "4–1",
+    ]
+
     reg = er.async_get(hass)
     ent = reg.async_get(f"sensor.{P}_next_match")
     assert ent.unique_id == f"{entry.entry_id}_next_match"

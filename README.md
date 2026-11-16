@@ -37,10 +37,11 @@ One device per team, named after the team.
 | `sensor.<team>_league_position` | Position | `points`, `played`, `won`, `drawn`, `lost`, `goals_for`, `goals_against`, `goal_difference`, `teams`, `table` (whole table) |
 | `sensor.<team>_points` | Points | |
 | `sensor.<team>_form` | Last 5 results, oldest first, e.g. `WDDWW` | `results` (those matches) |
+| `sensor.<team>_division_results` | Date of the latest day with results in the division | `today` (every division match today, played or not), `latest_date`, `latest` (every match on that day). Each match has `home_team`, `away_team`, `status`, `score`, `home_score`, `away_score`, `half_time`, `venue` |
 | `calendar.<team>_matches` | On during a match | Every match this season; played ones show the score, postponed/abandoned ones are labelled |
 | `event.<team>_new_result` | Event types `win`, `draw`, `loss` | The match, as on `last_result` |
 
-`upcoming`, `table` and `results` are not stored in the recorder.
+`upcoming`, `table`, `results`, `today` and `latest` are not stored in the recorder.
 
 A match stays the **next match** until 90 minutes after kick-off. A match without a kick-off time on Full-Time is an all-day calendar event, stays the next match all day, and its sensor shows midnight UK time; every match dict has `date` and `time_known` so cards can tell.
 
