@@ -87,17 +87,17 @@ class FullTimeCoordinator(DataUpdateCoordinator[FullTimeData]):
             results = await self.client.results(self.division_id)
         except FullTimeError as err:
             return self._stale_data(err)
-        self._last_success = dt_util.utcnow()
-        if self.update_interval != self._normal_interval:
-            _LOGGER.info("FullTime API is back for %s", self.team)
-            self.update_interval = self._normal_interval
-
         matches = parse_matches(fixtures, results, self._tz)
         if not any(m.involves(self.team) for m in matches):
             raise UpdateFailed(
                 f"{self.team} has no matches in division {self.division_id}; "
                 "a new season gets new division IDs, so add the team again"
             )
+        # Only usable data counts as a success for the outage fallback.
+        self._last_success = dt_util.utcnow()
+        if self.update_interval != self._normal_interval:
+            _LOGGER.info("FullTime API is back for %s", self.team)
+            self.update_interval = self._normal_interval
         view = team_view(matches, self.team, dt_util.now(), MATCH_DURATION)
         return FullTimeData(view, matches, await self._new_results(view))
 

@@ -21,7 +21,6 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.fa_fulltime.api import FullTimeError
 from custom_components.fa_fulltime.const import CONF_SCAN_INTERVAL, DOMAIN
-from custom_components.fa_fulltime.parse import team_view
 
 from .conftest import ENTRY_DATA, RESULTS, TEAM
 
@@ -329,18 +328,44 @@ async def test_kept_data_moves_on_with_the_clock(
     entry: MockConfigEntry,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    """Kept data still works the next match out from the current time."""
+    """Kept data still moves the next match on once its kick-off has passed."""
+    fixtures = copy.deepcopy(api.fixtures.return_value)
+    fixtures.insert(
+        0,
+        {"fixtureDateTime": "15/11/26 14:00", "homeTeam": TEAM, "awayTeam": "X"},
+    )
+    api.fixtures.return_value = fixtures
     await _setup(hass, entry)
+    nxt = f"sensor.{P}_next_match"
+    assert hass.states.get(nxt).state == "2026-11-15T14:00:00+00:00"
+
     api.fixtures.side_effect = FullTimeError("down")
-    with patch(
-        "custom_components.fa_fulltime.coordinator.team_view",
-        wraps=team_view,
-    ) as view:
-        freezer.tick(timedelta(minutes=121))
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
-    assert view.call_count == 1
-    assert view.call_args.args[2] > dt_util.parse_datetime(NOW)
+    freezer.tick(timedelta(hours=4))  # 16:00, past the 14:00 match
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(nxt).state == "2026-12-05T09:00:00+00:00"
+
+
+async def test_bad_data_does_not_extend_kept_data(
+    hass: HomeAssistant,
+    api: AsyncMock,
+    entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A poll without the team doesn't restart the 24-hour window."""
+    await _setup(hass, entry)
+    coordinator = entry.runtime_data
+    api.fixtures.return_value = []
+    api.results.return_value = []
+    freezer.tick(timedelta(hours=23))
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+
+    api.fixtures.side_effect = FullTimeError("down")
+    freezer.tick(timedelta(hours=2))
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    assert coordinator.update_interval == timedelta(minutes=5)
 
 
 async def test_entities_unavailable_when_data_too_old(
