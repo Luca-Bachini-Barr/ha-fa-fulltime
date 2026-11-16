@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -25,6 +25,8 @@ from .const import (
     FULLTIME_TZ,
     MATCH_DURATION,
     RESULT_EVENT_MAX_AGE,
+    RETRY_INTERVAL,
+    STALE_DATA_MAX_AGE,
 )
 from .parse import Match, TeamView, parse_matches, team_view
 
@@ -52,13 +54,16 @@ class FullTimeCoordinator(DataUpdateCoordinator[FullTimeData]):
     ) -> None:
         """Set up the coordinator with the entry's poll interval."""
         minutes = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        self._normal_interval = timedelta(minutes=minutes)
         super().__init__(
             hass,
             _LOGGER,
             config_entry=entry,
             name=f"{DOMAIN} {entry.title}",
-            update_interval=timedelta(minutes=minutes),
+            update_interval=self._normal_interval,
         )
+        # When the last poll that reached the API succeeded.
+        self._last_success: datetime | None = None
         self.client = client
         self.division_id: str = entry.data[CONF_DIVISION_ID]
         self.team: str = entry.data[CONF_TEAM]
@@ -81,16 +86,45 @@ class FullTimeCoordinator(DataUpdateCoordinator[FullTimeData]):
             fixtures = await self.client.fixtures(self.division_id)
             results = await self.client.results(self.division_id)
         except FullTimeError as err:
-            raise UpdateFailed(str(err)) from err
-
+            return self._stale_data(err)
         matches = parse_matches(fixtures, results, self._tz)
         if not any(m.involves(self.team) for m in matches):
             raise UpdateFailed(
                 f"{self.team} has no matches in division {self.division_id}; "
                 "a new season gets new division IDs, so add the team again"
             )
+        # Only usable data counts as a success for the outage fallback.
+        self._last_success = dt_util.utcnow()
+        if self.update_interval != self._normal_interval:
+            _LOGGER.info("FullTime API is back for %s", self.team)
+            self.update_interval = self._normal_interval
         view = team_view(matches, self.team, dt_util.now(), MATCH_DURATION)
         return FullTimeData(view, matches, await self._new_results(view))
+
+    def _stale_data(self, err: FullTimeError) -> FullTimeData:
+        """Keep the last good data through a short API outage.
+
+        The team view is worked out again so the next match and the calendar
+        move on with the clock. No new-result events fire from old data.
+        Raises UpdateFailed when there is no data yet or it is too old.
+        """
+        # Poll again soon, but never less often than the configured interval.
+        self.update_interval = min(RETRY_INTERVAL, self._normal_interval)
+        if (
+            self.data is None
+            or self._last_success is None
+            or dt_util.utcnow() - self._last_success > STALE_DATA_MAX_AGE
+        ):
+            raise UpdateFailed(str(err)) from err
+        _LOGGER.warning(
+            "%s; keeping data from %s, retrying in %s",
+            err,
+            dt_util.as_local(self._last_success).isoformat(timespec="minutes"),
+            self.update_interval,
+        )
+        matches = self.data.matches
+        view = team_view(matches, self.team, dt_util.now(), MATCH_DURATION)
+        return FullTimeData(view, matches)
 
     async def _new_results(self, view: TeamView) -> list[Match]:
         """Results of the team not yet reported, oldest first.
