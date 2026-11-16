@@ -12,6 +12,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
@@ -20,8 +21,9 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.fa_fulltime.api import FullTimeError
 from custom_components.fa_fulltime.const import CONF_SCAN_INTERVAL, DOMAIN
+from custom_components.fa_fulltime.parse import team_view
 
-from .conftest import RESULTS, TEAM
+from .conftest import ENTRY_DATA, RESULTS, TEAM
 
 NOW = "2026-11-15 12:00:00+00:00"
 P = "wingrave_juniors_u15_wingrave_wasps"
@@ -290,19 +292,93 @@ async def test_team_missing_from_division(
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
 
-async def test_entities_unavailable_after_failed_poll(
+async def test_failed_poll_keeps_data_and_retries_soon(
     hass: HomeAssistant,
     api: AsyncMock,
     entry: MockConfigEntry,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    """A failed poll marks the entities unavailable until the next good one."""
+    """A failed poll keeps the last data and polls again every 5 minutes."""
     await _setup(hass, entry)
-    api.results.side_effect = FullTimeError("down")
+    coordinator = entry.runtime_data
+    api.results.side_effect = FullTimeError("GET x: HTTP 503")
     freezer.tick(timedelta(minutes=121))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
+    assert hass.states.get(f"sensor.{P}_points").state == "11"
+    assert coordinator.update_interval == timedelta(minutes=5)
+    calls = api.results.call_count
+
+    freezer.tick(timedelta(minutes=6))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert api.results.call_count == calls + 1
+
+    api.results.side_effect = None
+    freezer.tick(timedelta(minutes=6))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert coordinator.last_update_success
+    assert coordinator.update_interval == timedelta(minutes=120)
+    assert hass.states.get(f"sensor.{P}_points").state == "11"
+
+
+async def test_kept_data_moves_on_with_the_clock(
+    hass: HomeAssistant,
+    api: AsyncMock,
+    entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Kept data still works the next match out from the current time."""
+    await _setup(hass, entry)
+    api.fixtures.side_effect = FullTimeError("down")
+    with patch(
+        "custom_components.fa_fulltime.coordinator.team_view",
+        wraps=team_view,
+    ) as view:
+        freezer.tick(timedelta(minutes=121))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert view.call_count == 1
+    assert view.call_args.args[2] > dt_util.parse_datetime(NOW)
+
+
+async def test_entities_unavailable_when_data_too_old(
+    hass: HomeAssistant,
+    api: AsyncMock,
+    entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """After a day without a good poll the entities go unavailable."""
+    await _setup(hass, entry)
+    api.results.side_effect = FullTimeError("down")
+    freezer.tick(timedelta(hours=24, minutes=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
     assert hass.states.get(f"sensor.{P}_points").state == "unavailable"
+    assert entry.runtime_data.update_interval == timedelta(minutes=5)
+
+
+async def test_short_interval_not_lengthened_by_retry(
+    hass: HomeAssistant, api: AsyncMock
+) -> None:
+    """The retry interval never polls less often than the configured one."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=TEAM,
+        data=dict(ENTRY_DATA),
+        options={CONF_SCAN_INTERVAL: 30},
+    )
+    await _setup(hass, entry)
+    coordinator = entry.runtime_data
+    with patch(
+        "custom_components.fa_fulltime.coordinator.RETRY_INTERVAL",
+        timedelta(hours=1),
+    ):
+        api.results.side_effect = FullTimeError("down")
+        await coordinator.async_refresh()
+    assert coordinator.update_interval == timedelta(minutes=30)
+    assert coordinator.last_update_success
 
 
 async def test_options_change_interval_and_reload(

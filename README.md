@@ -71,6 +71,7 @@ actions:
 - Full-Time's JSON has no fixture IDs; matches are identified by date and teams.
 - No referees, addresses, line-ups or scorers — those live on Full-Time pages the API does not read.
 - The public API is a free service run by its author; keep the poll interval sensible, or self-host it.
+- When the API has an outage (for example HTTP 503), the entities keep the last good data for up to 24 hours and the integration tries again every 5 minutes until the API answers, then goes back to the normal interval. After 24 hours without a good poll the entities go unavailable.
 
 ## Development
 

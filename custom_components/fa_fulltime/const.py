@@ -24,6 +24,10 @@ DEFAULT_API_URL = "https://faapi.jwhsolutions.co.uk"
 DEFAULT_SCAN_INTERVAL = 120  # minutes
 MIN_SCAN_INTERVAL = 30
 MAX_SCAN_INTERVAL = 1440
+# The public API has short outages (HTTP 503). While a poll fails, keep the
+# last good data for up to STALE_DATA_MAX_AGE and poll again every RETRY_INTERVAL.
+RETRY_INTERVAL = timedelta(minutes=5)
+STALE_DATA_MAX_AGE = timedelta(hours=24)
 
 # The API scrapes Full-Time with a headless browser on a cache miss.
 REQUEST_TIMEOUT = 120
